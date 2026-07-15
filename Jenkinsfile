@@ -37,7 +37,6 @@ pipeline {
         }
 
         stage('Deploy to Kubernetes') {
-stage('Deploy to Kubernetes') {
             steps {
                 echo "Applying manifests and updating deployment image..."
                 // Always apply the manifests first so Service or ConfigMap changes take effect
@@ -45,7 +44,7 @@ stage('Deploy to Kubernetes') {
                 // Then update the image to the exact build tag
                 sh "kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}"
             }
-        }        }
+        }       
 
         stage('Verify Deployment Status') {
             steps {
