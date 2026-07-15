@@ -46,7 +46,7 @@ pipeline {
                         kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG} --record
                     else
                         # If bootstrapping for the first time, apply your k8s deployment manifest
-                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f deployment.yaml
                         kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}
                     fi
                 """
