@@ -37,21 +37,15 @@ pipeline {
         }
 
         stage('Deploy to Kubernetes') {
+stage('Deploy to Kubernetes') {
             steps {
-                echo "Updating Kubernetes deployment..."
-                // Safely update the container image in your deployment.
-                // If the deployment doesn't exist yet, it will apply your manifest first.
-                sh """
-                    if kubectl get deployment ${DEPLOYMENT_NAME} >/dev/null 2>&1; then
-                        kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG} --record
-                    else
-                        # If bootstrapping for the first time, apply your k8s deployment manifest
-                        kubectl apply -f deployment.yaml
-                        kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}
-                    fi
-                """
+                echo "Applying manifests and updating deployment image..."
+                // Always apply the manifests first so Service or ConfigMap changes take effect
+                sh "kubectl apply -f deployment.yaml"
+                // Then update the image to the exact build tag
+                sh "kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}"
             }
-        }
+        }        }
 
         stage('Verify Deployment Status') {
             steps {
