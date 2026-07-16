@@ -14,6 +14,7 @@ spec:
       labels:
         app: my-app
     spec:
+      serviceAccountName: node-reader-sa  # <-- ADD THIS LINE
       containers:
       - name: app-container
         image: kregistry.siwko.org:5000/my-app:latest
