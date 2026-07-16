@@ -1,8 +1,10 @@
 import json
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import sys
+import threading
+import time
 
-from kgetnodes import get_k8s_node_list
+# from kgetnodes import get_k8s_node_list
 import datetime 
 
 class MyCustomHandler(BaseHTTPRequestHandler):
@@ -12,7 +14,7 @@ class MyCustomHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        
+        print(f"Handled by thread: {threading.current_thread().name}")        
         now=datetime.datetime.now()
         output_time=now.strftime('%Y-%d-%m %H:%M:%S')
         # 2. Define the response payload
@@ -29,6 +31,9 @@ class MyCustomHandler(BaseHTTPRequestHandler):
 
         # 3. Write the response back to the client socket
         self.wfile.write(json.dumps(response_data).encode('utf-8')+'\r\n'.encode('utf-8')) 
+        print('sleeping')
+        time.sleep(2)
+        print('awake')
 
 if __name__ == '__main__':
     port = 8000
