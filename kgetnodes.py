@@ -61,6 +61,8 @@ def get_k8s_node_list():
             if condition.type == "Ready" and condition.status == "True":
                 status = "Ready"
                 break
+
+        print(f"{name:<30} {status}")
         
         return_node_list.append((name, status))
 
