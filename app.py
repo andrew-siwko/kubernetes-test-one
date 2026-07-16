@@ -6,6 +6,7 @@ from kgetnodes import get_k8s_node_list
 
 class MyHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
+        print('do_GET')
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
