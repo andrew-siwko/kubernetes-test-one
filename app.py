@@ -28,7 +28,7 @@ class MyCustomHandler(BaseHTTPRequestHandler):
         # self.wfile.write(f"success at: {output_time}\n".encode())
 
         # 3. Write the response back to the client socket
-        self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        self.wfile.write(json.dumps(response_data).encode('utf-8')+'\r\n'.encode('utf-8')) 
 
 if __name__ == '__main__':
     port = 8000
