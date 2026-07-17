@@ -31,9 +31,9 @@ class MyCustomHandler(BaseHTTPRequestHandler):
 
         # 3. Write the response back to the client socket
         self.wfile.write(json.dumps(response_data).encode('utf-8')+'\r\n'.encode('utf-8')) 
-        print('sleeping')
-        time.sleep(2)
-        print('awake')
+        # print('sleeping')
+        # time.sleep(2)
+        # print('awake')
 
 if __name__ == '__main__':
     port = 8000
