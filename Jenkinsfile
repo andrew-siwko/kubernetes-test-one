@@ -4,9 +4,9 @@ pipeline {
     environment {
         // Use the domain name your K8s cluster uses to resolve the registry
         REGISTRY_DOMAIN = 'kregistry.siwko.org:5000'
-        IMAGE_NAME      = 'my-app'
+        IMAGE_NAME      = 'python-server'
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
-        DEPLOYMENT_NAME = 'my-app-deployment'
+        DEPLOYMENT_NAME = 'python-server-deployment'
     }
 
     stages {
