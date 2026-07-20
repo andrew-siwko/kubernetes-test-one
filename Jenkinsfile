@@ -23,7 +23,11 @@ pipeline {
                 // Cluster has both amd64 (RHEL) and arm64 (Orange Pi) nodes, so the image
                 // manifest must cover both platforms. Multi-platform images can't be
                 // docker-loaded locally, so build and push happen in one buildx step.
-                sh "docker buildx create --use --name multiarch-builder --node multiarch-builder0 || docker buildx use multiarch-builder"
+                // Recreate the builder each run so it always picks up buildkitd.toml
+                // (the docker-container driver runs BuildKit in its own container,
+                // isolated from the host daemon.json insecure-registries setting).
+                sh "docker buildx rm multiarch-builder || true"
+                sh "docker buildx create --use --name multiarch-builder --driver docker-container --config buildkitd.toml --bootstrap"
                 sh """
                     docker buildx build \
                       --platform linux/amd64,linux/arm64 \
