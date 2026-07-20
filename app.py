@@ -1,4 +1,5 @@
 import json
+import os
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import sys
 import threading
@@ -21,7 +22,8 @@ class MyCustomHandler(BaseHTTPRequestHandler):
         response_data = {
             "status": "success",
             "message": "Hello from my-app concurrent server!",
-            'time' : output_time
+            'time' : output_time,
+            'node' : os.environ.get('NODE_NAME', 'unknown')
 
         }
         # for node in get_k8s_node_list():
