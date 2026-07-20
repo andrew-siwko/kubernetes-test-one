@@ -7,6 +7,7 @@ pipeline {
         IMAGE_NAME      = 'python-server'
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         DEPLOYMENT_NAME = 'python-server-deployment'
+        RETAIN_COUNT    = '10'
     }
 
     stages {
@@ -58,6 +59,40 @@ pipeline {
                 echo "Verifying rollout status..."
                 // Actively monitor the rollout to ensure it doesn't get stuck (e.g. on an ImagePullBackOff)
                 sh "kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=2m"
+            }
+        }
+        stage('Prune Old Registry Tags') {
+            steps {
+                echo "Pruning ${IMAGE_NAME} tags in ${REGISTRY_DOMAIN}, keeping the ${RETAIN_COUNT} most recent numbered builds..."
+                // Deletes old manifests via the registry HTTP API so the registry stops
+                // serving them. This does NOT reclaim disk space -- the underlying blobs
+                // stay on disk until `registry garbage-collect` runs (see
+                // scripts/registry-gc.sh), so this is safe to run after every build.
+                // "latest" and any non-numeric tag are never touched. Requires jq on the agent.
+                sh '''
+                    set -e
+                    TAGS_JSON=$(curl -sf "http://${REGISTRY_DOMAIN}/v2/${IMAGE_NAME}/tags/list")
+                    OLD_TAGS=$(echo "$TAGS_JSON" | jq -r '.tags[]?' | grep -E '^[0-9]+$' | sort -rn | tail -n +$((RETAIN_COUNT + 1)))
+
+                    if [ -z "$OLD_TAGS" ]; then
+                        echo "Nothing to prune."
+                    fi
+
+                    for TAG in $OLD_TAGS; do
+                        DIGEST=$(curl -sI \
+                            -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+                            -H "Accept: application/vnd.oci.image.index.v1+json" \
+                            "http://${REGISTRY_DOMAIN}/v2/${IMAGE_NAME}/manifests/${TAG}" \
+                            | grep -i '^docker-content-digest:' | tr -d '\\r' | awk '{print $2}')
+
+                        if [ -n "$DIGEST" ]; then
+                            echo "Deleting ${IMAGE_NAME}:${TAG} (${DIGEST})"
+                            curl -sf -X DELETE "http://${REGISTRY_DOMAIN}/v2/${IMAGE_NAME}/manifests/${DIGEST}" || echo "Delete failed for ${TAG}, continuing"
+                        else
+                            echo "Could not resolve digest for tag ${TAG}, skipping"
+                        fi
+                    done
+                '''
             }
         }
     }
