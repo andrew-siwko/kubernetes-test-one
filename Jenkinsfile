@@ -17,22 +17,20 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Push Multi-Arch Image') {
             steps {
-                echo "Building image: ${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}..."
-                // Build the image locally on the RHEL 10 agent
-                sh "docker build -t ${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG} ."
-                sh "docker tag ${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY_DOMAIN}/${IMAGE_NAME}:latest"
-            }
-        }
-
-        stage('Push to Local Registry') {
-            steps {
-                echo "Pushing images to local registry..."
-                // Since this agent runs on the registry host, we push directly to localhost
-                // without encountering external TLS or network routing issues
-                sh "docker push ${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}"
-                sh "docker push ${REGISTRY_DOMAIN}/${IMAGE_NAME}:latest"
+                echo "Building & pushing multi-arch image: ${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}..."
+                // Cluster has both amd64 (RHEL) and arm64 (Orange Pi) nodes, so the image
+                // manifest must cover both platforms. Multi-platform images can't be
+                // docker-loaded locally, so build and push happen in one buildx step.
+                sh "docker buildx create --use --name multiarch-builder --node multiarch-builder0 || docker buildx use multiarch-builder"
+                sh """
+                    docker buildx build \
+                      --platform linux/amd64,linux/arm64 \
+                      -t ${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG} \
+                      -t ${REGISTRY_DOMAIN}/${IMAGE_NAME}:latest \
+                      --push .
+                """
             }
         }
 
