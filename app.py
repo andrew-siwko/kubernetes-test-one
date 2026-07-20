@@ -21,7 +21,7 @@ class MyCustomHandler(BaseHTTPRequestHandler):
         # 2. Define the response payload
         response_data = {
             "status": "success",
-            "message": "Hello from my-app concurrent server!",
+            "message": "Hello World!",
             'time' : output_time,
             'node' : os.environ.get('NODE_NAME', 'unknown')
 
