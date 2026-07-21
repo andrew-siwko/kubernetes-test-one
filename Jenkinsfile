@@ -42,7 +42,7 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy example to Kubernetes') {
             steps {
                 echo "Applying manifests and updating deployment image..."
                 // Always apply the manifests first so Service or ConfigMap changes take effect
@@ -51,6 +51,13 @@ pipeline {
                 sh "kubectl apply -f deployment.yaml"
                 // Then update the image to the exact build tag
                 sh "kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }       
+
+        stage('Deploy External DNS to Kubernetes') {
+            steps {
+                echo "Applying external dns deployment"
+                sh "kubectl apply -f external-dns-linode.yaml"
             }
         }       
 
