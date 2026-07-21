@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: prod-postgres-external
+  namespace: default
+spec:
+  type: LoadBalancer
+  selector:
+    cnpg.io/cluster: prod-postgres
+    cnpg.io/instanceRole: primary   # use "replica" instead if you only want read access
+  ports:
+  - port: 5432
+    targetPort: 5432
+    
