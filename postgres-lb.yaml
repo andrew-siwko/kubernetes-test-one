@@ -3,6 +3,9 @@ kind: Service
 metadata:
   name: prod-postgres-external
   namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: postgres.siwko.org
+    external-dns.alpha.kubernetes.io/ttl: "30"
 spec:
   type: LoadBalancer
   selector:
