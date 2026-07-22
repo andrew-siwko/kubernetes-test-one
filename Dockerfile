@@ -42,6 +42,6 @@ ENV PYTHONUNBUFFERED=1
 
 # Expose the port your application listens on (adjust if your app uses a different port)
 EXPOSE 8000
-
+ENV PYTHONUNBUFFERED=1
 # The command to execute your application
 CMD ["python", "app.py"]
