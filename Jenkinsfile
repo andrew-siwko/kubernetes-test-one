@@ -54,6 +54,17 @@ pipeline {
             }
         }       
 
+        stage('Label Cluster Nodes by Physical Host') {
+            steps {
+                echo "Labeling nodes with their physical host, so pods can be spread across real hardware..."
+                sh """
+                    kubectl label node kcontrol01 knode01 knode02 knode03 knode04 physical-host=winbox-1 --overwrite
+                    kubectl label node knode05 knode06 knode07 knode08 physical-host=winbox-2 --overwrite
+                    kubectl label node orangepizero3 physical-host=orangepi --overwrite
+                """
+            }
+        }
+
         stage('Apply infrastructure deployments') {
             steps {
                 sh "kubectl apply -f metal-lb-config.yaml"
@@ -64,7 +75,21 @@ pipeline {
                 echo "Applying external dns deployment"
                 sh "kubectl apply -f external-dns-linode.yaml"
             }
-        }       
+        }
+
+        stage('Deploy CNPG Operator to Kubernetes') {
+            steps {
+                echo "Applying CloudNativePG operator (CRDs, RBAC, webhooks, controller manager)"
+                // Pinned to the upstream v1.30.0 release manifest -- bump the file and this
+                // comment together when upgrading. Idempotent: no-op if the cluster already
+                // matches, since this is the same bundle the operator was originally installed from.
+                // --server-side is required, not optional: the CNPG CRDs (esp.
+                // clusters.postgresql.cnpg.io) are big enough that client-side apply's
+                // last-applied-configuration annotation exceeds Kubernetes' 256KB annotation
+                // limit and fails.
+                sh "kubectl apply --server-side --force-conflicts -f cnpg-operator.yaml"
+            }
+        }
 
         stage('Verify Deployment Status') {
             steps {
