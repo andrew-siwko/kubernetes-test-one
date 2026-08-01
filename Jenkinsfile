@@ -54,6 +54,11 @@ pipeline {
             }
         }       
 
+        stage('Apply infrastructure deployments') {
+            steps {
+                sh "kubectl apply -f metal-lb-config.yaml"
+            }
+        }
         stage('Deploy External DNS to Kubernetes') {
             steps {
                 echo "Applying external dns deployment"
