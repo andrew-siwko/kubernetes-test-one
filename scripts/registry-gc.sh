@@ -23,7 +23,13 @@ echo "$(date -Iseconds) Stopping $CONTAINER for garbage collection..."
 docker stop "$CONTAINER" >/dev/null
 
 echo "$(date -Iseconds) Running garbage-collect..."
-docker run --rm -v "$VOLUME:$VOLUME" "$IMAGE" garbage-collect /etc/docker/registry/config.yml
+# --delete-untagged is required, not optional: without it, garbage-collect only
+# sweeps blobs with zero manifest references, but leaves untagged manifests
+# (and everything they reference) on disk indefinitely -- which is exactly the
+# state every deleted tag is in after the Jenkins prune stage runs. Confirmed
+# by testing: a plain run left an untagged image's blobs and manifest fully
+# intact, reporting "0 manifests eligible for deletion".
+docker run --rm -v "$VOLUME:$VOLUME" "$IMAGE" garbage-collect --delete-untagged /etc/docker/registry/config.yml
 
 echo "$(date -Iseconds) Restarting $CONTAINER..."
 docker start "$CONTAINER" >/dev/null
