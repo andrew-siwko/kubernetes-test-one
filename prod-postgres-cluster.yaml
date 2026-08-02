@@ -1,0 +1,34 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: prod-postgres
+  namespace: default
+spec:
+  # 4, not 3: matches the 4 db-host-group values below, one instance per
+  # group -- see the affinity comment for why.
+  instances: 4
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    # db-host-group, not kubernetes.io/hostname or physical-host: there are
+    # only 2 physical hosts (winbox-1/winbox-2), so a required constraint
+    # keyed on either would strand any instance beyond the 2nd with nowhere
+    # to schedule. db-host-group splits each physical host into 2 groups of
+    # 2 nodes (see the "Label Cluster Nodes by DB Host Group" Jenkins
+    # stage), giving exactly 4 valid values for the 4 instances here --
+    # required anti-affinity guarantees one instance per group, which means
+    # 2 instances per physical host (never all on one) and, within a host,
+    # the 2 instances land on different VMs (so a single-VM failure only
+    # ever takes out one instance, not two).
+    topologyKey: db-host-group
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  bootstrap:
+    initdb:
+      database: app_db
+      owner: app_user
+  storage:
+    size: 10Gi
+  postgresql:
+    pg_hba:
+    - local all all scram-sha-256
+    - host all all all scram-sha-256
