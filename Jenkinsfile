@@ -47,8 +47,10 @@ pipeline {
                 echo "Applying manifests and updating deployment image..."
                 // Always apply the manifests first so Service or ConfigMap changes take effect
                 sh "kubectl apply -f rbac.yaml"
-                // Always apply the manifests first so Service or ConfigMap changes take effect
-                sh "kubectl apply -f deployment.yaml"
+                // Always apply the manifests first so Service or ConfigMap changes take effect.
+                // deployment.yaml has no hardcoded registry -- substitute the same
+                // REGISTRY_DOMAIN used for the build so there's one source of truth.
+                sh "sed 's|REGISTRY_DOMAIN_PLACEHOLDER|${REGISTRY_DOMAIN}|g' deployment.yaml | kubectl apply -f -"
                 // Then update the image to the exact build tag
                 sh "kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}"
             }
@@ -61,6 +63,29 @@ pipeline {
                     kubectl label node kcontrol01 knode01 knode02 knode03 knode04 physical-host=winbox-1 --overwrite
                     kubectl label node knode05 knode06 knode07 knode08 physical-host=winbox-2 --overwrite
                     kubectl label node orangepizero3 physical-host=orangepi --overwrite
+                """
+            }
+        }
+
+        stage('Label Cluster Nodes by DB Host Group') {
+            steps {
+                // Four groups of two nodes each, two groups per physical host, so a
+                // required podAntiAffinity on this label can place exactly one
+                // postgres instance per group -- 4 groups for 4 instances means no
+                // group is ever oversubscribed, unlike physical-host (only 2 values)
+                // which would strand a 3rd/4th instance with nowhere left to
+                // schedule under a required constraint. Two groups per physical
+                // host also means a single-VM failure only ever takes out one
+                // instance, not two, since the paired group is a different VM.
+                // Must run before the CNPG Cluster manifest is applied -- the
+                // scheduler needs this label to already exist on nodes before a
+                // Cluster spec can require spreading across its values.
+                echo "Labeling nodes with db-host-group, so postgres can require one instance per group..."
+                sh """
+                    kubectl label node knode01 knode02 db-host-group=winbox1-a --overwrite
+                    kubectl label node knode03 knode04 db-host-group=winbox1-b --overwrite
+                    kubectl label node knode05 knode06 db-host-group=winbox2-a --overwrite
+                    kubectl label node knode07 knode08 db-host-group=winbox2-b --overwrite
                 """
             }
         }
@@ -88,6 +113,17 @@ pipeline {
                 // last-applied-configuration annotation exceeds Kubernetes' 256KB annotation
                 // limit and fails.
                 sh "kubectl apply --server-side --force-conflicts -f cnpg-operator.yaml"
+            }
+        }
+
+        stage('Deploy CNPG Cluster to Kubernetes') {
+            steps {
+                echo "Applying the prod-postgres Cluster resource"
+                // Must run after both the operator (needs the CRD to exist) and the
+                // "Label Cluster Nodes by DB Host Group" stage (the Cluster's
+                // affinity requires spreading across db-host-group values, which
+                // only means something once nodes actually carry that label).
+                sh "kubectl apply -f prod-postgres-cluster.yaml"
             }
         }
 
