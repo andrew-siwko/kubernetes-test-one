@@ -18,7 +18,7 @@ spec:
       serviceAccountName: node-reader-sa  # <-- ADD THIS LINE
       containers:
       - name: app-container
-        image: kregistry.siwko.org:5000/python-server:latest
+        image: REGISTRY_DOMAIN_PLACEHOLDER/python-server:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
