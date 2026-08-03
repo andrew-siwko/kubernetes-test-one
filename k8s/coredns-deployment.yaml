@@ -5,18 +5,34 @@
 # the coredns ServiceAccount/RBAC already exist, which kubeadm creates on
 # its own and aren't reproduced here.
 #
-# The one intentional change from the live/kubeadm-default spec:
-# topologySpreadConstraints[].whenUnsatisfiable is DoNotSchedule, not the
-# default ScheduleAnyway. ScheduleAnyway is a soft preference -- exactly
-# when a physical host goes down (fewer scheduling targets available) is
-# when the scheduler is explicitly allowed to ignore the spread and bunch
-# replicas up anyway, defeating the point. Confirmed live: during a
-# winbox-1 outage, CoreDNS became completely unreachable
-# (10.96.0.10:53 -> No route to host) despite this constraint already
-# existing, because it was never enforced. With 3 replicas, 3 physical
-# hosts (winbox-1/winbox-2/orangepi), and maxSkew=1, DoNotSchedule forces
-# a clean 1-1-1 split, so losing any single physical host leaves 2 of 3
-# replicas alive.
+# Two intentional changes from the live/kubeadm-default spec:
+#
+# 1. topologySpreadConstraints[].whenUnsatisfiable is DoNotSchedule, not
+#    the default ScheduleAnyway. ScheduleAnyway is a soft preference --
+#    exactly when a physical host goes down (fewer scheduling targets
+#    available) is when the scheduler is explicitly allowed to ignore the
+#    spread and bunch replicas up anyway, defeating the point. Confirmed
+#    live: during a winbox-1 outage, CoreDNS became completely unreachable
+#    (10.96.0.10:53 -> No route to host) despite this constraint already
+#    existing, because it was never enforced. With 3 replicas, 3 physical
+#    hosts (winbox-1/winbox-2/orangepi), and maxSkew=1, DoNotSchedule
+#    forces a clean 1-1-1 split, so losing any single physical host leaves
+#    2 of 3 replicas alive.
+#
+# 2. The kubeadm-default toleration for the control-plane taint
+#    (node-role.kubernetes.io/control-plane) is removed, so CoreDNS can no
+#    longer land on kcontrol01 at all. Confirmed live why this matters: a
+#    replica dying on kcontrol01 is uniquely worse than dying anywhere
+#    else, because losing kcontrol01 ALSO takes down the API server that
+#    kube-proxy needs to learn the replica is gone and remove it from the
+#    Service's endpoint list. Every other node is "replica dies, kube-proxy
+#    fixes the rule in seconds"; kcontrol01 is "replica dies AND the fix
+#    mechanism is disabled at the same time" -- the exact iptables rule
+#    (10.244.0.2:53, kcontrol01's IP, still weighted at 33% in the DNS
+#    Service chain) that was found stuck stale during a real winbox-1
+#    outage, unresolvable until kcontrol01 itself came back. kcontrol01
+#    was never load-bearing for the physical-host spread anyway --
+#    knode01-04 already represent winbox-1.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -127,8 +143,6 @@ spec:
       tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
-      - effect: NoSchedule
-        key: node-role.kubernetes.io/control-plane
       - effect: NoSchedule
         key: dedicated
         operator: Equal
