@@ -46,11 +46,11 @@ pipeline {
             steps {
                 echo "Applying manifests and updating deployment image..."
                 // Always apply the manifests first so Service or ConfigMap changes take effect
-                sh "kubectl apply -f rbac.yaml"
+                sh "kubectl apply -f k8s/rbac.yaml"
                 // Always apply the manifests first so Service or ConfigMap changes take effect.
                 // deployment.yaml has no hardcoded registry -- substitute the same
                 // REGISTRY_DOMAIN used for the build so there's one source of truth.
-                sh "sed 's|REGISTRY_DOMAIN_PLACEHOLDER|${REGISTRY_DOMAIN}|g' deployment.yaml | kubectl apply -f -"
+                sh "sed 's|REGISTRY_DOMAIN_PLACEHOLDER|${REGISTRY_DOMAIN}|g' k8s/deployment.yaml | kubectl apply -f -"
                 // Then update the image to the exact build tag
                 sh "kubectl set image deployment/${DEPLOYMENT_NAME} app-container=${REGISTRY_DOMAIN}/${IMAGE_NAME}:${IMAGE_TAG}"
             }
@@ -92,13 +92,28 @@ pipeline {
 
         stage('Apply infrastructure deployments') {
             steps {
-                sh "kubectl apply -f metal-lb-config.yaml"
+                sh "kubectl apply -f k8s/metal-lb-config.yaml"
             }
         }
         stage('Deploy External DNS to Kubernetes') {
             steps {
                 echo "Applying external dns deployment"
-                sh "kubectl apply -f external-dns-linode.yaml"
+                sh "kubectl apply -f k8s/external-dns-linode.yaml"
+            }
+        }
+
+        stage('Apply CoreDNS resilience fix') {
+            steps {
+                echo "Enforcing physical-host spread for CoreDNS (kube-system)"
+                // Re-asserts kubeadm's CoreDNS Deployment with one change: the
+                // existing physical-host topologySpreadConstraint's
+                // whenUnsatisfiable is DoNotSchedule instead of the kubeadm
+                // default ScheduleAnyway, so a physical host outage can't leave
+                // all 3 replicas stranded on the surviving hosts. See the
+                // comment in coredns-deployment.yaml for the incident that
+                // prompted this. Depends on the "coredns" ConfigMap/ServiceAccount
+                // kubeadm already created -- not reproduced here.
+                sh "kubectl apply -f k8s/coredns-deployment.yaml"
             }
         }
 
@@ -112,7 +127,7 @@ pipeline {
                 // clusters.postgresql.cnpg.io) are big enough that client-side apply's
                 // last-applied-configuration annotation exceeds Kubernetes' 256KB annotation
                 // limit and fails.
-                sh "kubectl apply --server-side --force-conflicts -f cnpg-operator.yaml"
+                sh "kubectl apply --server-side --force-conflicts -f k8s/cnpg-operator.yaml"
             }
         }
 
@@ -123,7 +138,7 @@ pipeline {
                 // "Label Cluster Nodes by DB Host Group" stage (the Cluster's
                 // affinity requires spreading across db-host-group values, which
                 // only means something once nodes actually carry that label).
-                sh "kubectl apply -f prod-postgres-cluster.yaml"
+                sh "kubectl apply -f k8s/prod-postgres-cluster.yaml"
             }
         }
 

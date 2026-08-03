@@ -1,0 +1,150 @@
+# Tracks kubeadm's cluster-bootstrap CoreDNS Deployment (kube-system) so the
+# physical-host spread fix below survives future cluster changes/rebuilds,
+# rather than being a one-off `kubectl edit`. This is NOT a from-scratch
+# bootstrap manifest -- it assumes the "coredns" ConfigMap (Corefile) and
+# the coredns ServiceAccount/RBAC already exist, which kubeadm creates on
+# its own and aren't reproduced here.
+#
+# The one intentional change from the live/kubeadm-default spec:
+# topologySpreadConstraints[].whenUnsatisfiable is DoNotSchedule, not the
+# default ScheduleAnyway. ScheduleAnyway is a soft preference -- exactly
+# when a physical host goes down (fewer scheduling targets available) is
+# when the scheduler is explicitly allowed to ignore the spread and bunch
+# replicas up anyway, defeating the point. Confirmed live: during a
+# winbox-1 outage, CoreDNS became completely unreachable
+# (10.96.0.10:53 -> No route to host) despite this constraint already
+# existing, because it was never enforced. With 3 replicas, 3 physical
+# hosts (winbox-1/winbox-2/orangepi), and maxSkew=1, DoNotSchedule forces
+# a clean 1-1-1 split, so losing any single physical host leaves 2 of 3
+# replicas alive.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: kube-dns
+  name: coredns
+  namespace: kube-system
+spec:
+  replicas: 3
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        k8s-app: kube-dns
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: k8s-app
+                  operator: In
+                  values:
+                  - kube-dns
+              topologyKey: kubernetes.io/hostname
+            weight: 100
+      containers:
+      - args:
+        - -conf
+        - /etc/coredns/Corefile
+        image: registry.k8s.io/coredns/coredns:v1.13.1
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /health
+            port: liveness-probe
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        name: coredns
+        ports:
+        - containerPort: 53
+          name: dns
+          protocol: UDP
+        - containerPort: 53
+          name: dns-tcp
+          protocol: TCP
+        - containerPort: 9153
+          name: metrics
+          protocol: TCP
+        - containerPort: 8080
+          name: liveness-probe
+          protocol: TCP
+        - containerPort: 8181
+          name: readiness-probe
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /ready
+            port: readiness-probe
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            memory: 170Mi
+          requests:
+            cpu: 100m
+            memory: 70Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            add:
+            - NET_BIND_SERVICE
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /etc/coredns
+          name: config-volume
+          readOnly: true
+      dnsPolicy: Default
+      nodeSelector:
+        kubernetes.io/os: linux
+      priorityClassName: system-cluster-critical
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: coredns
+      serviceAccountName: coredns
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+      - effect: NoSchedule
+        key: dedicated
+        operator: Equal
+        value: sdr
+      topologySpreadConstraints:
+      - labelSelector:
+          matchLabels:
+            k8s-app: kube-dns
+        maxSkew: 1
+        topologyKey: physical-host
+        whenUnsatisfiable: DoNotSchedule
+      volumes:
+      - configMap:
+          defaultMode: 420
+          items:
+          - key: Corefile
+            path: Corefile
+          name: coredns
+        name: config-volume
