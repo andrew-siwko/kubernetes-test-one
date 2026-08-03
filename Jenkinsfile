@@ -180,12 +180,28 @@ pipeline {
             steps {
                 // local-path must stay the cluster's sole default. Longhorn's vendored
                 // bundle creates its own "longhorn" StorageClass (3 replicas, no zone
-                // anti-affinity override) from an embedded ConfigMap, marked default.
-                // Patched off here every run (idempotent, self-healing) rather than
-                // trusted to stay off, since upstream has open issues about this
-                // annotation being reasserted on manager restart/upgrade
-                // (longhorn/longhorn#3821, #9391).
-                echo "Ensuring Longhorn's built-in StorageClass isn't marked default..."
+                // anti-affinity override) from an embedded ConfigMap -- but not at apply
+                // time: longhorn-manager creates it dynamically once it's up, which on a
+                // slow/cold install (confirmed live: image pulls took ~40 minutes under
+                // host disk contention) can be many minutes after this stage would
+                // otherwise run. Wait for the object to exist first, or the patch 404s
+                // and fails the whole pipeline before the next stage ever runs (exactly
+                // what happened on the first real install). Patched every run
+                // (idempotent, self-healing) rather than trusted to stay off once, since
+                // upstream has open issues about this annotation being reasserted on
+                // manager restart/upgrade (longhorn/longhorn#3821, #9391).
+                echo "Waiting for Longhorn's built-in StorageClass to exist, then ensuring it isn't marked default..."
+                // kubectl wait errors immediately with NotFound on a named resource that
+                // doesn't exist yet -- it does not poll for creation (confirmed directly:
+                // `kubectl wait --for=jsonpath=... storageclass/does-not-exist` fails
+                // instantly, exit 1). Hence a plain retry loop instead.
+                sh '''
+                    for i in $(seq 1 90); do
+                        kubectl get storageclass longhorn >/dev/null 2>&1 && break
+                        sleep 10
+                    done
+                    kubectl get storageclass longhorn
+                '''
                 sh 'kubectl patch storageclass longhorn -p \'{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}\''
             }
         }
