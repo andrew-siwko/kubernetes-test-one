@@ -1,0 +1,38 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-ha
+  # Deliberately NOT reusing the name "longhorn" -- the vendored
+  # k8s/longhorn.yaml bundle owns that name via its own ConfigMap-driven
+  # controller (longhorn-storageclass ConfigMap), and upstream has open
+  # issues about that StorageClass's spec getting reasserted/reconciled
+  # (longhorn/longhorn#3821, #9391). A distinct name avoids fighting it.
+  # Also deliberately NOT marked storageclass.kubernetes.io/is-default-class:
+  # local-path stays the cluster's sole default (see the Jenkinsfile's
+  # "Un-default Longhorn's built-in StorageClass" stage); workloads that
+  # want node-independent storage opt in explicitly via
+  # storageClassName: longhorn-ha.
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  # 2 replicas + hard zone anti-affinity, not 3-with-soft: with only 2
+  # physical hosts (winbox-1/winbox-2, see the "Label nodes for Longhorn
+  # zone" Jenkins stage), a 3rd replica has nowhere new to go -- it just
+  # doubles up on one of the two hosts, adding disk/CPU/rebuild cost for
+  # zero extra fault tolerance, since losing that host still drops you to
+  # exactly 1 surviving copy either way. 2 replicas with anti-affinity
+  # disabled (= hard/strict, not the soft default) deterministically
+  # guarantees exactly one replica per physical host, mirroring
+  # prod-postgres-cluster.yaml's own "exactly enough values for the
+  # constraint" philosophy applied to the storage layer instead of pods.
+  #
+  # Accepted trade-off: with only 2 replicas, one host down means zero
+  # redundancy until it recovers -- the same trade-off already accepted
+  # for CNPG Postgres in this cluster, not a free lunch.
+  numberOfReplicas: "2"
+  replicaZoneSoftAntiAffinity: "disabled"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
+  dataLocality: "disabled"

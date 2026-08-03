@@ -142,6 +142,61 @@ pipeline {
             }
         }
 
+        stage('Label nodes for Longhorn zone') {
+            steps {
+                // Longhorn hard-codes its replica failure-domain ("zone")
+                // source to the k8s node label topology.kubernetes.io/zone --
+                // confirmed via current docs, not configurable to reuse the
+                // physical-host label directly. This just mirrors
+                // physical-host's existing values under the key Longhorn
+                // actually reads. Must run before any real Longhorn volume
+                // is created so replicas schedule with correct zone info
+                // from the start.
+                echo "Labeling nodes with topology.kubernetes.io/zone, so Longhorn can spread replicas across physical hosts..."
+                sh """
+                    kubectl label node kcontrol01 knode01 knode02 knode03 knode04 topology.kubernetes.io/zone=winbox-1 --overwrite
+                    kubectl label node knode05 knode06 knode07 knode08 topology.kubernetes.io/zone=winbox-2 --overwrite
+                """
+            }
+        }
+
+        stage('Install Longhorn') {
+            steps {
+                echo "Applying Longhorn (namespace, CRDs, manager/CSI DaemonSets+Deployments)"
+                // Pinned to the upstream v1.12.0 release manifest -- bump the file and this
+                // comment together when upgrading. Requires scripts/longhorn-node-prep.sh to
+                // have already been run by hand on every node once (iscsid etc.) -- Jenkins
+                // doesn't do host-level `ssh root@` prep in this repo's model, see that
+                // script's header.
+                // --server-side is a defensive choice, not a documented Longhorn requirement:
+                // its 23 CRDs are the same shape of problem that made k8s/cnpg-operator.yaml
+                // need this (large embedded schemas risk exceeding the 262144-byte
+                // last-applied-configuration limit under plain client-side apply).
+                sh "kubectl apply --server-side --force-conflicts -f k8s/longhorn.yaml"
+            }
+        }
+
+        stage("Un-default Longhorn's built-in StorageClass") {
+            steps {
+                // local-path must stay the cluster's sole default. Longhorn's vendored
+                // bundle creates its own "longhorn" StorageClass (3 replicas, no zone
+                // anti-affinity override) from an embedded ConfigMap, marked default.
+                // Patched off here every run (idempotent, self-healing) rather than
+                // trusted to stay off, since upstream has open issues about this
+                // annotation being reasserted on manager restart/upgrade
+                // (longhorn/longhorn#3821, #9391).
+                echo "Ensuring Longhorn's built-in StorageClass isn't marked default..."
+                sh 'kubectl patch storageclass longhorn -p \'{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}\''
+            }
+        }
+
+        stage('Apply Longhorn HA StorageClass') {
+            steps {
+                echo "Applying the longhorn-ha StorageClass (2 replicas, hard zone anti-affinity)"
+                sh "kubectl apply -f k8s/longhorn-ha-storageclass.yaml"
+            }
+        }
+
         stage('Verify Deployment Status') {
             steps {
                 echo "Verifying rollout status..."
