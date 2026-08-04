@@ -1,17 +1,17 @@
 # kubernetes-test-one
 
-A minimal Python HTTP server project intended as a Kubernetes deployment testbed. It exposes a simple JSON endpoint on port `8000`, includes a multi-stage `Dockerfile`, and ships Kubernetes manifests for deploying the app and related cluster resources...
+A minimal Python HTTP server project intended as a Kubernetes deployment testbed. It exposes a simple JSON endpoint on port `8000`, includes a multi-stage `Dockerfile`, and ships Kubernetes manifests for deploying the app and related cluster resources.
 
-and then it took on a life of its own.  As I migrated a variety of projects that I've built over decades, I started to aggregate the "infrastructure" bits of Kubernetes here.  The idea is that if I want to stand up a brand new cluster, recover a detroyed environmet, or update confiurations, I've got all the deployment information here (well, not secrets).
+Then it took on a life of its own. As I migrated a variety of projects that I have built over decades, I started to aggregate the Kubernetes "infrastructure" bits here. The idea is that if I want to stand up a brand new cluster, recover a destroyed environment, or update configurations, I've got all the deployment information here (well, not secrets).
 
-So, this started out as a, "how can I run Python?" project and ended up being the collector for
-- A Postgres database cluster
-- A metal load balancer pool
-- External DNS
-- Tweaks to Core DNS to provide resiliency
-- A Longhorn storage deployment
+So this started out as a "How can I run Python?" project and ended up being the collector for:
+- a Postgres database cluster
+- a MetalLB IP address pool
+- ExternalDNS
+- tweaks to CoreDNS to provide resiliency
+- a Longhorn storage deployment
 
-I did get the Python HTTP server running.  It did help me learn about deploying on a multi-node cluster.  That value was eclipsed by the value of centralized infrastructure.
+I did get the Python HTTP server running. It helped me learn about deploying to a multi-node cluster. That value was eclipsed by the value of centralized infrastructure.
 
 ## Features
 
