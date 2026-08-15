@@ -213,6 +213,20 @@ pipeline {
             }
         }
 
+        stage('Configure Longhorn Backup Target') {
+            steps {
+                echo "Pointing Longhorn's backup target at cloud3's NFS export"
+                sh "kubectl apply -f k8s/longhorn-backup-target.yaml"
+            }
+        }
+
+        stage('Apply Longhorn Nightly Backup RecurringJob') {
+            steps {
+                echo "Applying the nightly backup schedule for longhorn-ha volumes"
+                sh "kubectl apply -f k8s/longhorn-nightly-backup-recurringjob.yaml"
+            }
+        }
+
         stage('Verify Deployment Status') {
             steps {
                 echo "Verifying rollout status..."
