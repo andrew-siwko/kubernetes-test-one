@@ -36,3 +36,10 @@ parameters:
   staleReplicaTimeout: "30"
   fsType: "ext4"
   dataLocality: "disabled"
+  # Auto-attaches every future PVC on this class to the
+  # "longhorn-ha-default" recurring-job group (see
+  # longhorn-nightly-backup-recurringjob.yaml) -- only affects volumes
+  # provisioned after this parameter is applied; PVCs that already existed
+  # are attached separately via the recurring-job-group.longhorn.io PVC
+  # label instead (see k8s notes / Jenkinsfile).
+  recurringJobSelector: '[{"name":"longhorn-ha-default","isGroup":true}]'

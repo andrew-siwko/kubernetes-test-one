@@ -1,0 +1,23 @@
+# Nightly backup schedule for all longhorn-ha volumes. Membership in the
+# "longhorn-ha-default" group is what actually attaches a volume to this
+# job -- see longhorn-ha-storageclass.yaml's recurringJobSelector parameter
+# (covers future PVCs automatically) and the recurring-job-group.longhorn.io
+# label applied directly to today's existing PVCs (covers volumes that
+# already existed before this StorageClass parameter was added, since it
+# only takes effect at provisioning time).
+#
+# 3:30am, off-hours for this cluster. retain: 7 keeps a week of nightlies --
+# both volumes backed up here are small (under 200M combined as of
+# 2026-08-14) so cost/space isn't a constraint; revisit if that changes.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: longhorn-ha-nightly-backup
+  namespace: longhorn-system
+spec:
+  cron: "30 3 * * *"
+  task: backup
+  groups:
+  - longhorn-ha-default
+  retain: 7
+  concurrency: 2

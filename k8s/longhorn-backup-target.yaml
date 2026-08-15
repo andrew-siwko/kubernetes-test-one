@@ -1,0 +1,36 @@
+# Points Longhorn's cluster-wide backup target at a dedicated NFS export on
+# cloud3.siwko.org (an OpenMediaVault NAS on the same LAN as every cluster
+# node -- confirmed live reachable, same subnet as kcontrol01/knode01-08).
+# No S3-compatible storage exists anywhere in this environment, so this is
+# the only backup-capable destination available; see the memory note
+# "cloud3-openmediavault-nas" for how that was confirmed.
+#
+# The export itself (/export/longhorn-backup, rw/no_root_squash/insecure,
+# matching the options on cloud3's other exports) was created by hand via
+# the OMV web UI -- OMV auto-generates /etc/exports from its own UI state
+# and discards manual edits, so that step can't be scripted from this repo.
+#
+# Path is /longhorn-backup, NOT /export/longhorn-backup: cloud3 exports
+# /export itself with fsid=0 (its NFSv4 pseudo-root), so NFSv4 clients
+# address everything under it relative to that root, dropping the /export
+# prefix -- confirmed live (mounting with /export/longhorn-backup 404's:
+# "No such file or directory" from the server) and confirmed against the
+# one other place this cluster's tooling mounts a cloud3 export
+# (ansible/mount_container_shared.yaml uses cloud3.siwko.org:/container_shared,
+# not :/export/container_shared).
+#
+# No credentialSecret: only needed for S3-style targets, not NFS.
+#
+# `apply`, not `patch`: unlike the "Un-default Longhorn's built-in
+# StorageClass" stage (which patches an object Longhorn creates on its own
+# schedule and must wait for), this manifest fully declares the desired
+# BackupTarget spec and is safe to apply whether or not Longhorn has already
+# created the "default" object -- apply creates-or-updates either way.
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: default
+  namespace: longhorn-system
+spec:
+  backupTargetURL: nfs://cloud3.siwko.org:/longhorn-backup
+  pollInterval: 5m0s
