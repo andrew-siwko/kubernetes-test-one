@@ -231,7 +231,7 @@ pipeline {
             steps {
                 echo "Verifying rollout status..."
                 // Actively monitor the rollout to ensure it doesn't get stuck (e.g. on an ImagePullBackOff)
-                sh "kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=2m"
+                sh "kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=4m"
             }
         }
         stage('Prune Old Registry Tags') {
