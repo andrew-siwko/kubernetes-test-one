@@ -62,11 +62,12 @@ pipeline {
                 sh """
                     kubectl label node kcontrol01 knode01 knode02 knode03 knode04 physical-host=winbox-1 --overwrite
                     kubectl label node knode05 knode06 knode07 knode08 physical-host=winbox-2 --overwrite
+                    kubectl label node knode09 knode10 knode11 knode12 physical-host=proxbox-1 --overwrite
                     kubectl label node orangepizero3 physical-host=orangepi --overwrite
                 """
             }
         }
-
+ 
         stage('Label Cluster Nodes by DB Host Group') {
             steps {
                 // Four groups of two nodes each, two groups per physical host, so a
@@ -86,6 +87,8 @@ pipeline {
                     kubectl label node knode03 knode04 db-host-group=winbox1-b --overwrite
                     kubectl label node knode05 knode06 db-host-group=winbox2-a --overwrite
                     kubectl label node knode07 knode08 db-host-group=winbox2-b --overwrite
+                    kubectl label node knode09 knode10 db-host-group=proxbox1-a --overwrite
+                    kubectl label node knode11 knode12 db-host-group=proxbox1-b --overwrite
                 """
             }
         }
