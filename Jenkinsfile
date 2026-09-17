@@ -120,6 +120,19 @@ pipeline {
             }
         }
 
+        stage('Deploy kured for rolling node reboots') {
+            steps {
+                echo "Applying kured (RBAC + DaemonSet) to kube-system"
+                // Reboots nodes one at a time -- cordon/drain (respecting the
+                // CoreDNS PodDisruptionBudget above) -> reboot -> wait for
+                // Ready -> uncordon. Only acts on a node once
+                // /var/run/reboot-required exists there; see the comment in
+                // kured.yaml for why that file is never created automatically
+                // on RHEL and who is responsible for touching it.
+                sh "kubectl apply -f k8s/kured.yaml"
+            }
+        }
+
         stage('Deploy CNPG Operator to Kubernetes') {
             steps {
                 echo "Applying CloudNativePG operator (CRDs, RBAC, webhooks, controller manager)"
