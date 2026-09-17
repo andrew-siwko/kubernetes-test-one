@@ -159,6 +159,7 @@ pipeline {
                 sh """
                     kubectl label node kcontrol01 knode01 knode02 knode03 knode04 topology.kubernetes.io/zone=winbox-1 --overwrite
                     kubectl label node knode05 knode06 knode07 knode08 topology.kubernetes.io/zone=winbox-2 --overwrite
+                    kubectl label node knode09 knode10 knode11 knode12 topology.kubernetes.io/zone=proxbox-1 --overwrite
                 """
             }
         }
