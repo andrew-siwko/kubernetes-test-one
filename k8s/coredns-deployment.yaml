@@ -5,7 +5,7 @@
 # the coredns ServiceAccount/RBAC already exist, which kubeadm creates on
 # its own and aren't reproduced here.
 #
-# Two intentional changes from the live/kubeadm-default spec:
+# Four intentional changes from the live/kubeadm-default spec:
 #
 # 1. topologySpreadConstraints[].whenUnsatisfiable is DoNotSchedule, not
 #    the default ScheduleAnyway. ScheduleAnyway is a soft preference --
@@ -14,10 +14,13 @@
 #    spread and bunch replicas up anyway, defeating the point. Confirmed
 #    live: during a winbox-1 outage, CoreDNS became completely unreachable
 #    (10.96.0.10:53 -> No route to host) despite this constraint already
-#    existing, because it was never enforced. With 3 replicas, 3 physical
-#    hosts (winbox-1/winbox-2/orangepi), and maxSkew=1, DoNotSchedule
-#    forces a clean 1-1-1 split, so losing any single physical host leaves
-#    2 of 3 replicas alive.
+#    existing, because it was never enforced. With 4 replicas, 4 physical
+#    hosts (winbox-1/winbox-2/proxbox-1/orangepi), and maxSkew=1,
+#    DoNotSchedule forces a clean 1-1-1-1 split, so losing any single
+#    physical host leaves 3 of 4 replicas alive. Replica count was bumped
+#    from 3 to 4 when proxbox-1 (knode09-12) was added as a fourth
+#    physical-host domain -- 3 replicas across 4 domains always left one
+#    physical host with no local replica.
 #
 # 2. The kubeadm-default toleration for the control-plane taint
 #    (node-role.kubernetes.io/control-plane) is removed, so CoreDNS can no
@@ -33,6 +36,22 @@
 #    outage, unresolvable until kcontrol01 itself came back. kcontrol01
 #    was never load-bearing for the physical-host spread anyway --
 #    knode01-04 already represent winbox-1.
+#
+# 3. podAntiAffinity uses requiredDuringSchedulingIgnoredDuringExecution,
+#    not preferred. With replicas now equal to the physical-host domain
+#    count, there's no scheduling scenario where two replicas *should*
+#    ever share a node/domain, so there's no reason to allow it under
+#    pressure -- required just makes that guarantee actually load-bearing
+#    instead of advisory.
+#
+# 4. A PodDisruptionBudget (below) with minAvailable: 3 was added after a
+#    rolling fleet reboot (kured-style, one node roughly every 3 minutes)
+#    cycled two of the three CoreDNS replicas' nodes back-to-back with no
+#    coordination, leaving CoreDNS briefly down to 1/3 replicas mid-rollout
+#    and causing real query failures (see qha-assignments CronJob failures,
+#    2026-09-17). A PDB is what makes drain-based tooling wait for CoreDNS
+#    to recover before touching the next node instead of steamrolling
+#    through the whole fleet on a fixed timer.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,7 +60,7 @@ metadata:
   name: coredns
   namespace: kube-system
 spec:
-  replicas: 3
+  replicas: 4
   revisionHistoryLimit: 10
   selector:
     matchLabels:
@@ -58,16 +77,14 @@ spec:
     spec:
       affinity:
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: k8s-app
-                  operator: In
-                  values:
-                  - kube-dns
-              topologyKey: kubernetes.io/hostname
-            weight: 100
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: k8s-app
+                operator: In
+                values:
+                - kube-dns
+            topologyKey: kubernetes.io/hostname
       containers:
       - args:
         - -conf
@@ -162,3 +179,14 @@ spec:
             path: Corefile
           name: coredns
         name: config-volume
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coredns
+  namespace: kube-system
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
