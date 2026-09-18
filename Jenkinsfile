@@ -62,7 +62,8 @@ pipeline {
                 sh """
                     kubectl label node kcontrol01 knode01 knode02 knode03 knode04 physical-host=winbox-1 --overwrite
                     kubectl label node knode05 knode06 knode07 knode08 physical-host=winbox-2 --overwrite
-                    kubectl label node knode09 knode10 knode11 knode12 physical-host=proxbox-1 --overwrite
+                    kubectl label node kcontrol03 knode09 knode10 knode11 knode12 physical-host=proxbox-1 --overwrite
+                    kubectl label node kcontrol02    physical-host=proxbox-2 --overwrite
                     kubectl label node orangepizero3 physical-host=orangepi --overwrite
                 """
             }
