@@ -58,6 +58,16 @@ pipeline {
 
         stage('Label Cluster Nodes by Physical Host') {
             steps {
+                // Any control-plane node listed here (kcontrol01/02/03) must already have
+                // had scripts/kube-vip-deploy.sh run against it by hand -- that script writes
+                // the kube-vip static pod manifest (/etc/kubernetes/manifests/kube-vip.yaml)
+                // that hands out the control-plane VIP (kcontrol.siwko.org). Same pattern as
+                // longhorn-node-prep.sh below: host-level filesystem writes on specific nodes
+                // stay out of Jenkins, see that script's header and k8s/kube-vip.yaml's header
+                // for why (a DaemonSet/kubectl apply can't stand up the thing the API server
+                // itself is reached through). Found 2026-09-17: kcontrol02/kcontrol03 were
+                // joined without this step, leaving kcontrol01 a silent single point of
+                // failure for API access despite etcd already being a healthy 3-node quorum.
                 echo "Labeling nodes with their physical host, so pods can be spread across real hardware..."
                 sh """
                     kubectl label node kcontrol01 knode01 knode02 knode03 knode04 physical-host=winbox-1 --overwrite

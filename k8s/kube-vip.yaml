@@ -1,0 +1,265 @@
+# kube-vip -- control-plane API server VIP (192.168.50.155, kcontrol.siwko.org).
+#
+# NOT applied with `kubectl apply`. This runs as a static pod, meaning each
+# control-plane node's kubelet reads its manifest straight from
+# /etc/kubernetes/manifests/ on that node's local disk, independent of the
+# API server. That's what lets it hand out the VIP that the API server
+# itself is reached through, and it's why a DaemonSet won't work here (a
+# DaemonSet pod can't be scheduled if the API server it depends on isn't
+# reachable yet).
+#
+# Deploy: run scripts/kube-vip-deploy.sh (writes the matching Pod manifest
+# below to /etc/kubernetes/manifests/kube-vip.yaml on each control-plane
+# node -- root on kcontrol01, user `asiwko` + sudo on kcontrol02/kcontrol03,
+# RHEL hosts unlike kcontrol01's Ubuntu/VirtualBox VM). The kubelet picks it
+# up within seconds, no restart needed. This file is the source of truth the
+# script's heredocs are copied from; keep them in sync by hand if either
+# changes. Not wired into Jenkins -- same host-level-write exclusion as
+# longhorn-node-prep.sh, see the Jenkinsfile's "Label Cluster Nodes by
+# Physical Host" stage comment.
+#
+# Found 2026-09-17: only kcontrol01 had this manifest. kube-vip already has
+# leader election baked in (vip_leaderelection, lease plndr-cp-lock) --
+# it's designed to run on every control-plane node and have them race for
+# the lease -- but kcontrol02/kcontrol03 were joined without it, so the VIP
+# had no failover target and kcontrol01 was a silent single point of
+# failure for API access despite etcd already being a healthy 3-node quorum.
+# See cluster_topology_2026_09 memory for the full incident.
+#
+# vip_interface differs per node: kcontrol01 is a VirtualBox VM (enp0s3),
+# kcontrol02/kcontrol03 are Proxmox VMs (eth0). Everything else is identical
+# across all three -- same VIP, same lease name, same image/version.
+#
+# kcontrol02/kcontrol03 prerequisite (deployed 2026-09-18): unlike
+# kcontrol01, these nodes' kubeadm join never generated
+# /etc/kubernetes/super-admin.conf (only admin.conf/controller-manager.conf/
+# kubelet.conf/scheduler.conf existed). Mounting a hostPath with no `type`
+# set against a missing path makes kubelet silently create an empty
+# directory there instead of failing -- kube-vip then can't read a
+# kubeconfig at all and crash-loops. Fixed by generating it directly on each
+# node: `sudo kubeadm init phase kubeconfig super-admin
+# --apiserver-advertise-address <that node's own local IP>
+# --apiserver-bind-port 6443`. The --apiserver-advertise-address override is
+# required, not optional -- without it kubeadm defaults to the cluster's
+# controlPlaneEndpoint (kcontrol.siwko.org:6443, i.e. this same VIP), which
+# would make kube-vip depend on the VIP being up to reach the API server it
+# does its own leader election through -- exactly backwards for a failover
+# target. kcontrol01's file already points at its own local IP for the same
+# reason. Static pods also don't pick up a fixed volume target automatically
+# -- `kubectl delete pod` on a static pod only deletes the API mirror
+# object, not the sandbox/mounts, so after fixing the file on disk the
+# manifest itself had to be moved out of /etc/kubernetes/manifests/ and back
+# to force the kubelet to recreate the sandbox with a fresh mount.
+
+---
+# kcontrol01 (VirtualBox VM on winbox1, interface enp0s3)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+spec:
+  containers:
+  - args:
+    - manager
+    env:
+    - name: vip_arp
+      value: "true"
+    - name: port
+      value: "6443"
+    - name: vip_nodename
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: vip_interface
+      value: enp0s3
+    - name: vip_subnet
+      value: "32"
+    - name: dns_mode
+      value: first
+    - name: dhcp_mode
+      value: ipv4
+    - name: cp_enable
+      value: "true"
+    - name: cp_namespace
+      value: kube-system
+    - name: vip_leaderelection
+      value: "true"
+    - name: vip_leasename
+      value: plndr-cp-lock
+    - name: vip_leaseduration
+      value: "15"
+    - name: vip_renewdeadline
+      value: "10"
+    - name: vip_retryperiod
+      value: "2"
+    - name: address
+      value: 192.168.50.155
+    - name: prometheus_server
+      value: :2112
+    image: ghcr.io/kube-vip/kube-vip:v1.2.2
+    imagePullPolicy: IfNotPresent
+    name: kube-vip
+    resources: {}
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+        - NET_RAW
+        drop:
+        - ALL
+    volumeMounts:
+    - mountPath: /etc/kubernetes/admin.conf
+      name: kubeconfig
+  hostAliases:
+  - hostnames:
+    - kubernetes
+    ip: 127.0.0.1
+  hostNetwork: true
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/super-admin.conf
+    name: kubeconfig
+status: {}
+
+---
+# kcontrol02 (Proxmox VM on proxmox2, interface eth0)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+spec:
+  containers:
+  - args:
+    - manager
+    env:
+    - name: vip_arp
+      value: "true"
+    - name: port
+      value: "6443"
+    - name: vip_nodename
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: vip_interface
+      value: eth0
+    - name: vip_subnet
+      value: "32"
+    - name: dns_mode
+      value: first
+    - name: dhcp_mode
+      value: ipv4
+    - name: cp_enable
+      value: "true"
+    - name: cp_namespace
+      value: kube-system
+    - name: vip_leaderelection
+      value: "true"
+    - name: vip_leasename
+      value: plndr-cp-lock
+    - name: vip_leaseduration
+      value: "15"
+    - name: vip_renewdeadline
+      value: "10"
+    - name: vip_retryperiod
+      value: "2"
+    - name: address
+      value: 192.168.50.155
+    - name: prometheus_server
+      value: :2112
+    image: ghcr.io/kube-vip/kube-vip:v1.2.2
+    imagePullPolicy: IfNotPresent
+    name: kube-vip
+    resources: {}
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+        - NET_RAW
+        drop:
+        - ALL
+    volumeMounts:
+    - mountPath: /etc/kubernetes/admin.conf
+      name: kubeconfig
+  hostAliases:
+  - hostnames:
+    - kubernetes
+    ip: 127.0.0.1
+  hostNetwork: true
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/super-admin.conf
+    name: kubeconfig
+status: {}
+
+---
+# kcontrol03 (Proxmox VM, interface eth0)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+spec:
+  containers:
+  - args:
+    - manager
+    env:
+    - name: vip_arp
+      value: "true"
+    - name: port
+      value: "6443"
+    - name: vip_nodename
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: vip_interface
+      value: eth0
+    - name: vip_subnet
+      value: "32"
+    - name: dns_mode
+      value: first
+    - name: dhcp_mode
+      value: ipv4
+    - name: cp_enable
+      value: "true"
+    - name: cp_namespace
+      value: kube-system
+    - name: vip_leaderelection
+      value: "true"
+    - name: vip_leasename
+      value: plndr-cp-lock
+    - name: vip_leaseduration
+      value: "15"
+    - name: vip_renewdeadline
+      value: "10"
+    - name: vip_retryperiod
+      value: "2"
+    - name: address
+      value: 192.168.50.155
+    - name: prometheus_server
+      value: :2112
+    image: ghcr.io/kube-vip/kube-vip:v1.2.2
+    imagePullPolicy: IfNotPresent
+    name: kube-vip
+    resources: {}
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+        - NET_RAW
+        drop:
+        - ALL
+    volumeMounts:
+    - mountPath: /etc/kubernetes/admin.conf
+      name: kubeconfig
+  hostAliases:
+  - hostnames:
+    - kubernetes
+    ip: 127.0.0.1
+  hostNetwork: true
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/super-admin.conf
+    name: kubeconfig
+status: {}
