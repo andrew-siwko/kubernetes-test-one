@@ -1,0 +1,111 @@
+# Headlamp -- web console for the cluster, evaluated 2026-05-27 alongside
+# kubernetes-dashboard (see the "Notes" section in README for that
+# comparison). Picked over kubernetes-dashboard as the one to actually
+# expose: it runs as kube-system's plain `default` ServiceAccount (confirmed
+# via `kubectl auth can-i --list --as=system:serviceaccount:kube-system:default`
+# -- only base API discovery, no cluster resource access), so unlike
+# kubernetes-dashboard's `admin-user` ServiceAccount (bound directly to
+# cluster-admin, sitting there as a standing credential), Headlamp has no
+# privileged in-cluster identity of its own. Every login supplies its own
+# token/kubeconfig, so access is exactly whatever that credential grants.
+#
+# Deployment/Service reproduce what was already running (deployed by hand,
+# untracked, before this file existed) -- image is pinned to `latest` by
+# upstream's own manifest, not a choice made here; consider pinning to a
+# real tag next time it's bumped, since every other image in this repo is.
+#
+# Ingress follows the same convention as every other Ingress in this
+# cluster (see www-siwko-web-ingress, probe-ingress, etc.): ExternalDNS is
+# deployed but every single Ingress opts out of it via the "ignore"
+# annotation -- DNS is managed by hand, not automatically, across this
+# entire cluster. So after applying this, an A record for
+# headlamp.siwko.org -> 10.102.15.54 (ingress-nginx's MetalLB address) still
+# needs to be created manually in Linode DNS, same as every other hostname
+# here.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: headlamp
+  template:
+    metadata:
+      labels:
+        k8s-app: headlamp
+    spec:
+      containers:
+      - name: headlamp
+        image: ghcr.io/headlamp-k8s/headlamp:latest
+        args:
+        - -in-cluster
+        - -plugins-dir=/headlamp/plugins
+        env:
+        - name: HEADLAMP_CONFIG_TRACING_ENABLED
+          value: "true"
+        - name: HEADLAMP_CONFIG_METRICS_ENABLED
+          value: "true"
+        - name: HEADLAMP_CONFIG_OTLP_ENDPOINT
+          value: otel-collector:4317
+        - name: HEADLAMP_CONFIG_SERVICE_NAME
+          value: headlamp
+        - name: HEADLAMP_CONFIG_SERVICE_VERSION
+          value: latest
+        ports:
+        - name: http
+          containerPort: 4466
+        - name: metrics
+          containerPort: 9090
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 4466
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 4466
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: kube-system
+spec:
+  selector:
+    k8s-app: headlamp
+  ports:
+  - port: 80
+    targetPort: 4466
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: headlamp-ingress
+  namespace: kube-system
+  annotations:
+    external-dns.alpha.kubernetes.io/controller: ignore
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: headlamp.siwko.org
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: headlamp
+            port:
+              number: 80

@@ -255,6 +255,19 @@ pipeline {
             }
         }
 
+        stage('Deploy Headlamp web console') {
+            steps {
+                // Was running in kube-system already (deployed by hand, untracked) --
+                // this just brings it under version control and adds the Ingress.
+                // DNS for headlamp.siwko.org is NOT automatic (see headlamp.yaml's
+                // header -- every Ingress in this cluster opts out of ExternalDNS),
+                // so a manual A record still has to exist pointing at ingress-nginx's
+                // MetalLB address.
+                echo "Applying Headlamp (Deployment, Service, Ingress) to kube-system"
+                sh "kubectl apply -f k8s/headlamp.yaml"
+            }
+        }
+
         stage('Verify Deployment Status') {
             steps {
                 echo "Verifying rollout status..."
