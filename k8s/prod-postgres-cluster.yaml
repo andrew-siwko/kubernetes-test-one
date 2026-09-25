@@ -6,7 +6,8 @@ metadata:
 spec:
   # 4, not 3: matches the 4 db-host-group values below, one instance per
   # group -- see the affinity comment for why.
-  instances: 4
+  # let's expand this out to proxmox-1
+  instances: 6
   affinity:
     enablePodAntiAffinity: true
     podAntiAffinityType: required
