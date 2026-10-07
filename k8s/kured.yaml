@@ -157,3 +157,5 @@ spec:
           command:
             - /usr/bin/kured
             - --reboot-sentinel=/sentinel/reboot-required
+            - --period=5m
+            - --lock-release-delay=5m
