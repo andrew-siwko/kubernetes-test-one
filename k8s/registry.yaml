@@ -1,0 +1,450 @@
+# In-cluster image registry -- replaces the `kregistry` VM (registry:2 in
+# docker on winbox1, 192.168.50.170). Moved 2026-11 after a winbox1 Windows
+# Update reboot (2026-11-01) took the VM down for ~10h and every rescheduled
+# pod cluster-wide hit ImagePullBackOff.
+#
+# Clients are untouched by design: the Service takes over the VM's old IP
+# (192.168.50.170, via the dedicated MetalLB pool in metal-lb-config.yaml) and
+# serves the same Let's Encrypt cert for the same name/port, so the existing
+# kregistry.siwko.org A record, every k8s/Jenkinsfile reference to
+# kregistry.siwko.org:5000, and the builder's /etc/buildkit/buildkitd.toml all
+# keep working unchanged.
+#
+# Resilience model: ONE replica (the filesystem storage driver is not safe with
+# concurrent writers) on a longhorn-ha volume (2 replicas, one per physical
+# host, nightly backup to cloud3). If the node or host dies, the pod moves to
+# another host and Longhorn re-attaches the surviving replica: minutes of
+# downtime, not hours. Requires Longhorn's node-down-pod-deletion-policy to be
+# something other than "do-nothing"; with do-nothing the pod on the dead node
+# stays Terminating forever and the Recreate strategy never starts a
+# replacement.
+#
+# NOT in this file (created out-of-band, never committed):
+#   - Secret registry/linode-dns-credentials (key linode.ini, same format as
+#     certbot-dns-linode's credentials file)
+#   - Secret registry/registry-tls is seeded by hand once, then owned by the
+#     registry-cert-renew CronJob below.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: registry
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: registry
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn-ha
+  resources:
+    requests:
+      # ~19G in use at migration time. Sized to the smaller of the two replica
+      # sites: the proxbox-1 replica lands on the 200G "hdd" Longhorn disks
+      # (pool1), but longhorn-ha's hard zone anti-affinity puts the other one on
+      # winbox-1/winbox-2, where knode01/03/04 have ~46-55G schedulable headroom
+      # and winbox-2 nodes cap at 31.5G (as of 2026-11-02). Expand when the
+      # other hosts have more room (longhorn-ha allows expansion).
+      storage: 40Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: RWO volume plus a single-writer storage driver.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values: ["amd64"]
+          # Prefer to stay off winbox-1: its VMs only restart when someone
+          # logs into the Windows desktop, so it has the longest outages.
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: physical-host
+                operator: NotIn
+                values: ["winbox-1"]
+      # Evict after 60s instead of the default 300s when the node drops out.
+      tolerations:
+      - key: node.kubernetes.io/not-ready
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 60
+      - key: node.kubernetes.io/unreachable
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 60
+      containers:
+      - name: registry
+        # Same version the VM ran (distribution 2.8.3).
+        image: registry:2.8.3
+        env:
+        - name: REGISTRY_HTTP_ADDR
+          value: "0.0.0.0:5000"
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: /certs/tls.crt
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: /certs/tls.key
+        - name: REGISTRY_STORAGE_DELETE_ENABLED
+          value: "true"
+        ports:
+        - name: registry
+          containerPort: 5000
+        readinessProbe:
+          httpGet:
+            path: /v2/
+            port: 5000
+            scheme: HTTPS
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /v2/
+            port: 5000
+            scheme: HTTPS
+          periodSeconds: 20
+          failureThreshold: 6
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/registry
+        - name: certs
+          mountPath: /certs
+          readOnly: true
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: registry-data
+      - name: certs
+        secret:
+          secretName: registry-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: registry
+  annotations:
+    # The VM's old address, from the autoAssign:false registry-pool.
+    metallb.universe.tf/loadBalancerIPs: 192.168.50.170
+spec:
+  type: LoadBalancer
+  # Plain L4 on :5000, deliberately not through ingress-nginx: no body-size or
+  # timeout limits on large layer pushes, and no extra dependency.
+  selector:
+    app: registry
+  ports:
+  - name: registry
+    port: 5000
+    targetPort: 5000
+---
+# ---------------------------------------------------------------------------
+# Maintenance jobs: cert renewal + (suspended) garbage collection.
+# Both talk to the API with the Python stdlib so no kubectl image is needed.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: registry-maintenance
+  namespace: registry
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registry-maintenance
+  namespace: registry
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["registry-tls"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["registry"]
+  verbs: ["get", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  resourceNames: ["registry"]
+  verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-maintenance
+  namespace: registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-maintenance
+subjects:
+- kind: ServiceAccount
+  name: registry-maintenance
+  namespace: registry
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-maintenance-scripts
+  namespace: registry
+data:
+  k8sapi.py: |
+    import json, ssl, urllib.error, urllib.request
+    SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+    API = "https://kubernetes.default.svc"
+    NS = open(SA + "/namespace").read().strip()
+    _TOKEN = open(SA + "/token").read().strip()
+    _CTX = ssl.create_default_context(cafile=SA + "/ca.crt")
+
+    def call(method, path, body=None, ctype="application/json"):
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(API + path, data=data, method=method, headers={
+            "Authorization": "Bearer " + _TOKEN,
+            "Content-Type": ctype,
+            "Accept": "application/json",
+        })
+        try:
+            with urllib.request.urlopen(req, context=_CTX, timeout=30) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise RuntimeError(f"{method} {path}: {e.code} {e.read().decode()[:500]}")
+
+    def merge_patch(path, body):
+        return call("PATCH", path, body, "application/merge-patch+json")
+
+    DEPLOY = f"/apis/apps/v1/namespaces/{NS}/deployments/registry"
+
+  renew-cert.py: |
+    # Renews the registry's Let's Encrypt cert via certbot's dns-linode plugin
+    # (same mechanism the VM used) when <30 days remain, writes it to the
+    # registry-tls Secret, then restarts the registry (2.x has no cert reload).
+    # FORCE=1 renews regardless of expiry.
+    import base64, datetime, os, subprocess, sys
+    sys.path.insert(0, "/scripts")
+    from cryptography import x509
+    from k8sapi import NS, DEPLOY, call, merge_patch
+
+    DOMAIN = os.environ["DOMAIN"]
+    SECRET = f"/api/v1/namespaces/{NS}/secrets/registry-tls"
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    existing = call("GET", SECRET)
+    if existing and os.environ.get("FORCE") != "1":
+        cert = x509.load_pem_x509_certificate(base64.b64decode(existing["data"]["tls.crt"]))
+        left = (cert.not_valid_after_utc - now).days
+        print(f"current cert expires {cert.not_valid_after_utc:%Y-%m-%d} ({left} days)")
+        if left > 30:
+            print("nothing to do")
+            sys.exit(0)
+
+    subprocess.run([
+        "certbot", "certonly", "--non-interactive", "--agree-tos",
+        "--register-unsafely-without-email",
+        "--dns-linode", "--dns-linode-credentials", "/creds/linode.ini",
+        "--dns-linode-propagation-seconds", "120",
+        "--config-dir", "/work/config", "--work-dir", "/work/work", "--logs-dir", "/work/logs",
+        "-d", DOMAIN,
+    ], check=True)
+
+    live = f"/work/config/live/{DOMAIN}"
+    data = {
+        "tls.crt": base64.b64encode(open(f"{live}/fullchain.pem", "rb").read()).decode(),
+        "tls.key": base64.b64encode(open(f"{live}/privkey.pem", "rb").read()).decode(),
+    }
+    if existing:
+        merge_patch(SECRET, {"data": data})
+    else:
+        call("POST", f"/api/v1/namespaces/{NS}/secrets", {
+            "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/tls",
+            "metadata": {"name": "registry-tls"}, "data": data,
+        })
+    print("secret registry-tls updated")
+
+    merge_patch(DEPLOY, {"spec": {"template": {"metadata": {"annotations": {
+        "registry.siwko.org/cert-renewed-at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}}}}})
+    print("registry restart triggered")
+
+  scale.py: |
+    # scale.py down -> scale registry to 0, wait for its pods to be gone, then
+    #                  touch /work/ok (the GC step only runs if that exists).
+    #                  Never exits non-zero, so the "up" step always runs.
+    # scale.py up   -> scale registry back to 1.
+    import sys, time
+    sys.path.insert(0, "/scripts")
+    from k8sapi import NS, DEPLOY, call, merge_patch
+
+    def replicas(n):
+        merge_patch(DEPLOY + "/scale", {"spec": {"replicas": n}})
+        print(f"scaled registry to {n}")
+
+    if sys.argv[1] == "up":
+        replicas(1)
+        sys.exit(0)
+
+    try:
+        replicas(0)
+        for _ in range(60):
+            pods = call("GET", f"/api/v1/namespaces/{NS}/pods?labelSelector=app%3Dregistry")["items"]
+            if not pods:
+                open("/work/ok", "w").close()
+                print("registry pods gone; GC may proceed")
+                break
+            time.sleep(5)
+        else:
+            print("registry pod still present after 300s; skipping GC")
+    except Exception as e:
+        print(f"scale down failed, skipping GC: {e}")
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-cert-renew
+  namespace: registry
+spec:
+  # Daily is cheap: the script exits immediately unless <30 days remain.
+  schedule: "17 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          serviceAccountName: registry-maintenance
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/arch: amd64
+          containers:
+          - name: certbot
+            image: certbot/dns-linode:v5.1.0
+            command: ["python3", "/scripts/renew-cert.py"]
+            env:
+            - name: DOMAIN
+              value: kregistry.siwko.org
+            volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: creds
+              mountPath: /creds
+              readOnly: true
+            - name: work
+              mountPath: /work
+          volumes:
+          - name: scripts
+            configMap:
+              name: registry-maintenance-scripts
+          - name: creds
+            secret:
+              secretName: linode-dns-credentials
+              defaultMode: 0400
+          - name: work
+            emptyDir: {}
+---
+# Garbage collection, replacing scripts/registry-gc.sh (which targeted the VM).
+#
+# SUSPENDED ON PURPOSE. `garbage-collect --delete-untagged` in registry 2.x is
+# reported to break multi-arch images: the per-platform child manifests of an
+# index are themselves untagged, and every Jenkins build here pushes an
+# amd64+arm64 index. Before un-suspending, either test it against a copy of
+# the data or move to registry 3.x, and check that a pruned repo still pulls
+# on both arches. Run it by hand with:
+#   kubectl -n registry create job --from=cronjob/registry-gc gc-manual
+#
+# Flow: scale registry to 0 -> GC -> scale back to 1. Each step is an init
+# container, and the final scale-up always runs (down/GC never fail the pod).
+# Required podAffinity puts this pod on the registry pod's node, so the RWO
+# volume is already attached there and the mount doesn't deadlock.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-gc
+  namespace: registry
+spec:
+  suspend: true
+  schedule: "0 5 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          serviceAccountName: registry-maintenance
+          restartPolicy: Never
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app: registry
+                topologyKey: kubernetes.io/hostname
+          initContainers:
+          - name: scale-down
+            image: python:3.13-alpine
+            command: ["python3", "/scripts/scale.py", "down"]
+            volumeMounts:
+            - { name: scripts, mountPath: /scripts }
+            - { name: work, mountPath: /work }
+          - name: gc
+            image: registry:2.8.3
+            command:
+            - sh
+            - -c
+            - |
+              if [ -f /work/ok ]; then
+                registry garbage-collect --delete-untagged /etc/docker/registry/config.yml || echo "GC FAILED"
+              else
+                echo "registry not stopped; GC skipped"
+              fi
+            volumeMounts:
+            - { name: data, mountPath: /var/lib/registry }
+            - { name: work, mountPath: /work }
+          containers:
+          - name: scale-up
+            image: python:3.13-alpine
+            command: ["python3", "/scripts/scale.py", "up"]
+            volumeMounts:
+            - { name: scripts, mountPath: /scripts }
+          volumes:
+          - name: scripts
+            configMap:
+              name: registry-maintenance-scripts
+          - name: work
+            emptyDir: {}
+          - name: data
+            persistentVolumeClaim:
+              claimName: registry-data
