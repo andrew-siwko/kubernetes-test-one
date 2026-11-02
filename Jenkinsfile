@@ -8,6 +8,8 @@ pipeline {
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         DEPLOYMENT_NAME = 'python-server-deployment'
         RETAIN_COUNT    = '10'
+        // See the "Deploy in-cluster image registry" stage.
+        REGISTRY_IN_CLUSTER = 'false'
     }
 
     stages {
@@ -73,7 +75,7 @@ pipeline {
                     kubectl label node kcontrol01 knode01 knode02 knode03 knode04 physical-host=winbox-1 --overwrite
                     kubectl label node knode05 knode06 knode07 knode08 physical-host=winbox-2 --overwrite
                     kubectl label node kcontrol03 knode09 knode10 knode11 knode12 physical-host=proxbox-1 --overwrite
-                    kubectl label node kcontrol02    physical-host=proxbox-2 --overwrite
+                    kubectl label node kcontrol04    physical-host=winbox-2 --overwrite
                     kubectl label node orangepizero3 physical-host=orangepi --overwrite
                 """
             }
@@ -256,6 +258,12 @@ pipeline {
         }
 
         stage('Deploy in-cluster image registry') {
+            // Gated until the cutover from the kregistry VM is done: the Service
+            // claims 192.168.50.170, which the VM still owns, and two hosts
+            // answering ARP for it breaks every image pull and push. The
+            // registry-tls Secret must also exist first. Flip to 'true' in the
+            // same commit as the cutover.
+            when { expression { env.REGISTRY_IN_CLUSTER == 'true' } }
             steps {
                 // Replaces the kregistry VM. Must come after the Longhorn stages
                 // (PVC uses longhorn-ha) and "Apply infrastructure deployments"
