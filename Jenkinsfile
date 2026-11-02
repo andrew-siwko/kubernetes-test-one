@@ -255,6 +255,18 @@ pipeline {
             }
         }
 
+        stage('Deploy in-cluster image registry') {
+            steps {
+                // Replaces the kregistry VM. Must come after the Longhorn stages
+                // (PVC uses longhorn-ha) and "Apply infrastructure deployments"
+                // (Service takes 192.168.50.170 from metal-lb-config.yaml's
+                // registry-pool). Secrets registry/linode-dns-credentials and
+                // registry/registry-tls are created out-of-band, see the file header.
+                echo "Applying the in-cluster registry (kregistry.siwko.org:5000)"
+                sh "kubectl apply -f k8s/registry.yaml"
+            }
+        }
+
         stage('Deploy Headlamp web console') {
             steps {
                 // Was running in kube-system already (deployed by hand, untracked) --
