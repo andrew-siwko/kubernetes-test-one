@@ -1,5 +1,10 @@
 #!/bin/sh
 #
+# LEGACY: only for the retired kregistry VM. The registry now runs in-cluster;
+# its GC is the (suspended) registry-gc CronJob in k8s/registry.yaml. Read that
+# file's warning about --delete-untagged and multi-arch images before running
+# either one.
+#
 # Reclaims disk space from blobs orphaned by manifest deletions -- the
 # Jenkins "Prune Old Registry Tags" stage only unlinks manifests via the
 # registry HTTP API and never touches blob storage, so this is what
