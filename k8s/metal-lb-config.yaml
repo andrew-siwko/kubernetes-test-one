@@ -8,6 +8,20 @@ spec:
   # CHANGE THIS to an unused range in your VirtualBox subnet!
   - 192.168.50.200-192.168.50.250
 ---
+# Single address the in-cluster registry takes over from the retired kregistry
+# VM, so kregistry.siwko.org's A record and every client stay unchanged. See
+# k8s/registry.yaml. autoAssign:false: only a Service that asks for it by
+# annotation can get it.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: registry-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 192.168.50.170/32
+  autoAssign: false
+---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
@@ -16,3 +30,4 @@ metadata:
 spec:
   ipAddressPools:
   - first-pool
+  - registry-pool
