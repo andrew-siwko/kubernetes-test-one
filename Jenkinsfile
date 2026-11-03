@@ -236,6 +236,13 @@ pipeline {
             }
         }
 
+        stage('Apply Longhorn settings') {
+            steps {
+                echo "Applying non-default Longhorn settings (node-down pod deletion policy)"
+                sh "kubectl apply -f k8s/longhorn-settings.yaml"
+            }
+        }
+
         stage('Apply Longhorn HA StorageClass') {
             steps {
                 echo "Applying the longhorn-ha StorageClass (2 replicas, hard zone anti-affinity)"

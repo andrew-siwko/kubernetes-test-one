@@ -1,0 +1,15 @@
+# Longhorn global settings that differ from the vendored bundle's defaults.
+# Applied after "Install Longhorn" so the Setting CRs already exist.
+#
+# node-down-pod-deletion-policy: the default "do-nothing" leaves a pod on a
+# dead node stuck Terminating forever. A Deployment with an RWO Longhorn
+# volume (e.g. the registry, k8s/registry.yaml) then never gets a replacement
+# on a healthy host. delete-deployment-pod force-deletes such pods once the
+# node is down, so the volume detaches and the pod restarts elsewhere.
+# StatefulSet pods are left alone on purpose. Changed 2026-11-02.
+apiVersion: longhorn.io/v1beta2
+kind: Setting
+metadata:
+  name: node-down-pod-deletion-policy
+  namespace: longhorn-system
+value: delete-deployment-pod
