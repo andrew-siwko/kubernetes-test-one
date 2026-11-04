@@ -9,7 +9,7 @@ pipeline {
         DEPLOYMENT_NAME = 'python-server-deployment'
         RETAIN_COUNT    = '10'
         // See the "Deploy in-cluster image registry" stage.
-        REGISTRY_IN_CLUSTER = 'false'
+        REGISTRY_IN_CLUSTER = 'true'
     }
 
     stages {
